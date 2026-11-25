@@ -4,7 +4,7 @@
 
 > Game pemecah gelembung dengan rangka neon tangan (MediaPipe Hand Landmarker). Berjalan di browser, tanpa login.
 
-![GIF demo](popbone/assets/demo.gif)
+![GIF demo](assets/demo.gif)
 
 ## Anggota dan pembagian tugas
 
