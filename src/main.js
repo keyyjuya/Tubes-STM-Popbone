@@ -2,4 +2,581 @@
  * Titik masuk aplikasi PopBone.
  * Menghubungkan modul capture, landmark, audio_fx, video_fx, dan recorder.
  */
-console.log("PopBone siap dikembangkan.");
+import { startCamera } from "./capture.js";
+import { createHandLandmarker, detectHands } from "./landmark.js";
+import { createAudioEngine } from "./audio_fx.js";
+import { drawFrame, getCoverGeometry, projectLandmarks } from "./video_fx.js";
+import { createRecorder } from "./recorder.js";
+
+const TAU = Math.PI * 2;
+
+const canvas = document.getElementById("scene");
+const ctx = canvas.getContext("2d", { alpha: false });
+const video = document.getElementById("cam");
+
+const startScreen = document.getElementById("startScreen");
+const startBtn = document.getElementById("startBtn");
+const loading = document.getElementById("loading");
+const loadingText = document.getElementById("loadingText");
+const errorMsg = document.getElementById("errorMsg");
+const statusEl = document.getElementById("status");
+const fpsEl = document.getElementById("fps");
+const recordBtn = document.getElementById("recordBtn");
+const stopRecordBtn = document.getElementById("stopRecordBtn");
+
+const state = {
+  video,
+  width: canvas.width,
+  height: canvas.height,
+  geom: getCoverGeometry(video, canvas.width, canvas.height),
+  hands: [],
+  bubbles: [],
+  particles: [],
+  ripples: [],
+  floaters: [],
+  score: 0,
+  combo: 0,
+  multiplierActive: false,
+  multiplierUntil: 0,
+  fist: false,
+  fistTimer: 0,
+  fistLatched: false,
+  openPalm: false,
+  openPalmPrev: false,
+  bombCooldown: 0,
+  shake: 0,
+  flash: 0,
+  flashColor: "255,255,255",
+  waveText: 0,
+  time: 0,
+  fps: 60,
+  running: false,
+  recording: false,
+  spawnTimer: 0,
+};
+
+// ---- util ----
+const rand = (min, max) => min + Math.random() * (max - min);
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+// ---- runtime ----
+let landmarker = null;
+let audio = null;
+let audioStream = null;
+let recorder = null;
+let started = false;
+let lastVideoTime = -1;
+let lastFrame = performance.now();
+let hudAccum = 0;
+
+function setLoading(text) {
+  loadingText.textContent = text;
+}
+
+function countExtended(lms) {
+  const wrist = lms[0];
+  const pairs = [
+    [4, 3],
+    [8, 6],
+    [12, 10],
+    [16, 14],
+    [20, 18],
+  ];
+  let count = 0;
+  for (const [tip, pip] of pairs) {
+    if (dist(lms[tip], wrist) > dist(lms[pip], wrist) * 1.06) count++;
+  }
+  return count;
+}
+
+function updateHands(result) {
+  const geom = state.geom;
+  state.hands = [];
+
+  if (!result || !result.landmarks || !result.landmarks.length) {
+    state.fist = false;
+    state.openPalm = false;
+    return;
+  }
+
+  for (let i = 0; i < result.landmarks.length; i++) {
+    const raw = result.landmarks[i];
+    if (!raw || raw.length < 21) continue;
+
+    const lms = projectLandmarks(raw, geom);
+    const center = { x: 0, y: 0 };
+    for (const idx of [0, 5, 9, 13, 17]) {
+      center.x += lms[idx].x;
+      center.y += lms[idx].y;
+    }
+    center.x /= 5;
+    center.y /= 5;
+
+    const palmSpan = dist(lms[5], lms[17]);
+    const handLen = dist(lms[0], lms[9]);
+    const radius = Math.max(24, Math.max(palmSpan, handLen) * 0.62);
+    const extended = countExtended(lms);
+    const spread = dist(lms[4], lms[20]) / Math.max(1, handLen);
+
+    state.hands.push({
+      landmarks: lms,
+      center,
+      radius,
+      extended,
+      spread,
+      hue: i === 0 ? 185 : 305,
+    });
+  }
+
+  state.fist = state.hands.some((h) => h.radius > 30 && h.extended <= 1);
+  state.openPalm = state.hands.some(
+    (h) => h.radius > 30 && h.extended >= 4 && h.spread > 1.45
+  );
+}
+
+// ---- game logic ----
+function spawnBubble() {
+  if (state.bubbles.length > 34) return;
+  const W = state.width;
+  const r = rand(26, 58);
+  const baseX = rand(r + 24, W - r - 24);
+  const amp = rand(8, Math.min(70, baseX - r, W - baseX - r));
+  state.bubbles.push({
+    x: baseX,
+    baseX,
+    y: -r - rand(0, 120),
+    r,
+    hue: rand(0, 360),
+    gold: false,
+    speed: rand(85, 175) + Math.min(90, state.score * 0.004),
+    phase: rand(0, TAU),
+    wobble: rand(0.8, 2.2),
+    amp,
+    points: Math.round(r * 1.6),
+  });
+}
+
+function spawnBonusWave() {
+  const W = state.width;
+  const n = 6;
+  for (let i = 0; i < n; i++) {
+    const r = rand(26, 40);
+    const baseX = (W * (i + 0.5)) / n + rand(-30, 30);
+    state.bubbles.push({
+      x: baseX,
+      baseX,
+      y: -r - i * 70 - rand(0, 40),
+      r,
+      hue: 45,
+      gold: true,
+      speed: rand(250, 330),
+      phase: rand(0, TAU),
+      wobble: rand(1.2, 2.4),
+      amp: rand(8, 26),
+      points: 120,
+    });
+  }
+}
+
+function spawnParticles(x, y, hue, count, gold) {
+  for (let i = 0; i < count; i++) {
+    const angle = rand(0, TAU);
+    const speed = rand(80, gold ? 620 : 430);
+    state.particles.push({
+      x,
+      y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 0,
+      dur: rand(0.35, 0.85),
+      size: rand(2, gold ? 7 : 5),
+      color: gold
+        ? `hsla(${rand(35, 55)}, 100%, ${rand(70, 95)}%, 0.95)`
+        : `hsla(${(hue + rand(-20, 20) + 360) % 360}, 100%, ${rand(65, 85)}%, 0.95)`,
+      gravity: 700,
+      drag: 0.92,
+    });
+  }
+}
+
+function collidesWithHands(bubble) {
+  for (const hand of state.hands) {
+    if (dist(hand.center, bubble) < bubble.r + hand.radius * 0.82) return true;
+    for (const idx of [4, 8, 12, 16, 20]) {
+      const p = hand.landmarks[idx];
+      if (p && dist(p, bubble) < bubble.r + 14) return true;
+    }
+  }
+  return false;
+}
+
+function popBubble(index, bubble) {
+  state.bubbles.splice(index, 1);
+  state.combo++;
+
+  const mult = state.multiplierActive ? 2 : 1;
+  const gain = Math.round(bubble.points * mult);
+  state.score += gain;
+
+  spawnParticles(bubble.x, bubble.y, bubble.hue, bubble.gold ? 30 : 16 + Math.round(bubble.r * 0.25), bubble.gold);
+  state.ripples.push({
+    x: bubble.x,
+    y: bubble.y,
+    r: bubble.r * 0.4,
+    max: bubble.r * 2.4,
+    life: 0,
+    dur: 0.5,
+    hue: bubble.hue,
+  });
+  state.floaters.push({
+    text: `+${gain}`,
+    x: bubble.x,
+    y: bubble.y,
+    size: bubble.gold ? 38 : 28,
+    color: bubble.gold ? "rgba(255, 225, 120, 0.98)" : `hsl(${bubble.hue}, 100%, 78%)`,
+    life: 0,
+    dur: 0.85,
+  });
+  state.shake = Math.max(state.shake, bubble.gold ? 0.5 : 0.16);
+
+  if (audio) {
+    audio.playPop(state.combo, bubble.gold);
+    if (!state.multiplierActive) {
+      audio.setIntensity(0.4 + Math.min(0.45, state.combo * 0.02));
+    }
+  }
+}
+
+function activateMultiplier(now) {
+  state.multiplierActive = true;
+  state.multiplierUntil = now + 5000;
+  state.flash = 0.22;
+  state.flashColor = "255,80,200";
+  state.shake = Math.max(state.shake, 0.3);
+  state.floaters.push({
+    text: "×2 SKOR!",
+    x: state.width / 2,
+    y: state.height * 0.4,
+    size: 56,
+    color: "rgba(255, 120, 220, 0.95)",
+    life: 0,
+    dur: 1.1,
+  });
+  if (audio) {
+    audio.setIntensity(1);
+    audio.playPower();
+  }
+}
+
+function triggerBomb(now) {
+  state.bombCooldown = now + 2200;
+  if (!state.bubbles.length) return;
+
+  const count = state.bubbles.length;
+  const mult = state.multiplierActive ? 2 : 1;
+  let gained = 0;
+
+  for (const bubble of state.bubbles) {
+    gained += Math.round(bubble.points * mult);
+    spawnParticles(bubble.x, bubble.y, bubble.hue, bubble.gold ? 26 : 14, bubble.gold);
+    state.ripples.push({
+      x: bubble.x,
+      y: bubble.y,
+      r: bubble.r * 0.4,
+      max: bubble.r * 2.2,
+      life: 0,
+      dur: 0.55,
+      hue: bubble.hue,
+    });
+  }
+
+  state.score += gained;
+  state.combo += count;
+  state.bubbles.length = 0;
+  state.flash = 0.55;
+  state.flashColor = "255,255,255";
+  state.shake = 1;
+  state.floaters.push({
+    text: `BOM! +${gained}`,
+    x: state.width / 2,
+    y: state.height * 0.45,
+    size: 64,
+    color: "rgba(255, 255, 255, 0.95)",
+    life: 0,
+    dur: 1.2,
+  });
+
+  if (audio) audio.playBomb();
+}
+
+function onClap() {
+  if (!state.running) return;
+  spawnBonusWave();
+  state.flash = 0.18;
+  state.flashColor = "255,220,120";
+  state.waveText = 1.4;
+  if (audio) audio.playBonus();
+}
+
+function updateEffects(dt) {
+  for (let i = state.particles.length - 1; i >= 0; i--) {
+    const p = state.particles[i];
+    p.life += dt;
+    if (p.life >= p.dur) {
+      state.particles.splice(i, 1);
+      continue;
+    }
+    const drag = Math.pow(p.drag, dt * 60);
+    p.vx *= drag;
+    p.vy *= drag;
+    p.vy += p.gravity * dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+  }
+
+  for (let i = state.ripples.length - 1; i >= 0; i--) {
+    const rp = state.ripples[i];
+    rp.life += dt;
+    if (rp.life >= rp.dur) state.ripples.splice(i, 1);
+  }
+
+  for (let i = state.floaters.length - 1; i >= 0; i--) {
+    const f = state.floaters[i];
+    f.life += dt;
+    if (f.life >= f.dur) state.floaters.splice(i, 1);
+  }
+
+  state.shake = Math.max(0, state.shake - dt * 3);
+  state.flash = Math.max(0, state.flash - dt * 2.5);
+  state.waveText = Math.max(0, state.waveText - dt * 0.7);
+}
+
+function updateGame(dt, now) {
+  // spawn berkala
+  state.spawnTimer += dt;
+  const interval = Math.max(0.5, 0.95 - state.score * 0.00003);
+  if (state.spawnTimer >= interval) {
+    state.spawnTimer = 0;
+    spawnBubble();
+    if (Math.random() < 0.16) spawnBubble();
+  }
+
+  // gerak & tabrakan gelembung
+  for (let i = state.bubbles.length - 1; i >= 0; i--) {
+    const b = state.bubbles[i];
+    b.y += b.speed * dt;
+    b.x = b.baseX + Math.sin(b.phase + state.time * b.wobble) * b.amp;
+
+    if (collidesWithHands(b)) {
+      popBubble(i, b);
+      continue;
+    }
+
+    if (b.y - b.r > state.height) {
+      state.bubbles.splice(i, 1);
+      state.combo = 0;
+      state.floaters.push({
+        text: "MISS",
+        x: b.x,
+        y: state.height - 60,
+        size: 26,
+        color: "rgba(255, 120, 120, 0.8)",
+        life: 0,
+        dur: 0.7,
+      });
+      if (audio) {
+        audio.playMiss();
+        if (!state.multiplierActive) audio.setIntensity(0.35);
+      }
+    }
+  }
+
+  updateEffects(dt);
+
+  // habis masa ×2
+  if (state.multiplierActive && now > state.multiplierUntil) {
+    state.multiplierActive = false;
+    if (audio) audio.setIntensity(0.4);
+  }
+
+  // gestur kepalan ditahan
+  if (state.fist) {
+    state.fistTimer += dt;
+    if (state.fistTimer > 0.5 && !state.fistLatched) {
+      state.fistLatched = true;
+      activateMultiplier(now);
+    }
+  } else {
+    state.fistTimer = 0;
+    state.fistLatched = false;
+  }
+
+  // gestur telapak dibuka lebar -> bom
+  if (state.openPalm && !state.openPalmPrev && now > state.bombCooldown && state.bubbles.length > 0) {
+    triggerBomb(now);
+  }
+  state.openPalmPrev = state.openPalm;
+}
+
+function updateHudDom(dt) {
+  hudAccum += dt;
+  if (hudAccum < 0.2) return;
+  hudAccum = 0;
+
+  let status;
+  if (!state.running) status = "Siap";
+  else if (!state.hands.length) status = "Cari tangan…";
+  else status = `${state.hands.length} tangan`;
+  if (statusEl.textContent !== status) statusEl.textContent = status;
+
+  const fps = `${Math.round(state.fps)} FPS`;
+  if (fpsEl.textContent !== fps) fpsEl.textContent = fps;
+}
+
+// ---- loop utama ----
+function loop(now) {
+  requestAnimationFrame(loop);
+
+  const dt = Math.min(0.05, Math.max(0.001, (now - lastFrame) / 1000));
+  lastFrame = now;
+  state.time += dt;
+  state.fps = state.fps * 0.9 + (1 / dt) * 0.1;
+
+  state.geom = getCoverGeometry(video, state.width, state.height);
+
+  // deteksi tangan hanya saat ada frame video baru
+  if (landmarker && video.readyState >= 2) {
+    if (video.currentTime !== lastVideoTime) {
+      lastVideoTime = video.currentTime;
+      let result = null;
+      try {
+        result = detectHands(landmarker, video, now);
+      } catch (err) {
+        console.warn("deteksi tangan gagal:", err);
+      }
+      updateHands(result);
+    }
+  } else if (!landmarker) {
+    state.hands = [];
+  }
+
+  if (state.running) {
+    updateGame(dt, now);
+    if (audio && audio.detectClap()) onClap();
+  } else {
+    updateEffects(dt);
+  }
+
+  drawFrame(ctx, state);
+  updateHudDom(dt);
+}
+
+// ---- rekaman ----
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+function stamp() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+
+recordBtn.addEventListener("click", () => {
+  if (!state.running) return;
+  try {
+    recorder = createRecorder(canvas, audioStream);
+    recorder.start();
+    state.recording = true;
+    recordBtn.disabled = true;
+    recordBtn.classList.add("recording-flash");
+    stopRecordBtn.disabled = false;
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = "Rekaman gagal";
+  }
+});
+
+stopRecordBtn.addEventListener("click", async () => {
+  if (!recorder) return;
+  stopRecordBtn.disabled = true;
+  const blob = await recorder.stop();
+  recorder = null;
+  state.recording = false;
+  recordBtn.disabled = false;
+  recordBtn.classList.remove("recording-flash");
+  if (blob) {
+    const ext = blob.type.includes("mp4") ? "mp4" : "webm";
+    downloadBlob(blob, `popbone-${stamp()}.${ext}`);
+  }
+});
+
+// fallback pemicu manual (mis. mikrofon tidak tersedia)
+window.addEventListener("keydown", (event) => {
+  if (!state.running) return;
+  if (event.code === "KeyB") onClap();
+  else if (event.code === "KeyX" && state.bubbles.length) triggerBomb(performance.now());
+});
+
+// ---- mulai ----
+async function start() {
+  if (started) return;
+  startBtn.disabled = true;
+  errorMsg.hidden = true;
+  loading.hidden = false;
+
+  try {
+    setLoading("Meminta izin kamera…");
+    const stream = await startCamera(video);
+    const micStream = stream.getAudioTracks().length
+      ? new MediaStream(stream.getAudioTracks())
+      : null;
+
+    try {
+      setLoading("Menyiapkan mesin audio…");
+      audio = await createAudioEngine(micStream);
+      await audio.resume();
+      audioStream = audio.recDest.stream;
+    } catch (err) {
+      console.warn("Audio engine gagal:", err);
+      audio = null;
+      audioStream = null;
+    }
+
+    setLoading("Memuat model Hand Landmarker…");
+    landmarker = await createHandLandmarker();
+
+    started = true;
+    state.running = true;
+    loading.hidden = true;
+    startScreen.classList.add("hidden");
+    recordBtn.disabled = typeof MediaRecorder === "undefined";
+
+    if (audio) {
+      audio.startBeat();
+      audio.setIntensity(0.4);
+    }
+
+    statusEl.textContent = micStream ? "Live" : "Live (mikrofon off)";
+    lastFrame = performance.now();
+    requestAnimationFrame(loop);
+  } catch (err) {
+    console.error(err);
+    loading.hidden = true;
+    startBtn.disabled = false;
+    errorMsg.hidden = false;
+    errorMsg.textContent =
+      "Gagal memulai: " +
+      (err && err.message ? err.message : err) +
+      "\nPastikan kamera diizinkan dan halaman dibuka lewat HTTPS atau localhost.";
+  }
+}
+
+startBtn.addEventListener("click", start);
