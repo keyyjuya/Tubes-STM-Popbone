@@ -301,8 +301,17 @@ export async function createAudioEngine(micStream) {
   }
 
   // ---- deteksi tepuk ----
+  // Tepuk harus benar-benar keras dan tajam. Ambang dibuat tinggi supaya
+  // suara kecil (bicara, ketukan meja, musik pelan) tidak ikut memicu.
   let lastClap = performance.now();
+  let prevRms = 0;
   const rmsHistory = [];
+
+  const CLAP_MIN_RMS = 0.13;
+  const CLAP_MIN_PEAK = 0.68;
+  const CLAP_HI_RATIO = 0.32;
+  const CLAP_LOW_RATIO_MAX = 0.6;
+  const CLAP_COOLDOWN_MS = 450;
 
   function detectClap() {
     if (!micAnalyser || !timeBuf || !freqBuf) return false;
@@ -326,28 +335,41 @@ export async function createAudioEngine(micStream) {
     rmsHistory.push(rms);
     if (rmsHistory.length > 24) rmsHistory.shift();
 
-    // Tepuk = transien tajam + banyak energi frekuensi tinggi.
+    // Tepuk = transien tajam + energi frekuensi tinggi yang dominan.
+    // Angin/desiran dari lambaian tangan justru banyak di frekuensi rendah,
+    // jadi lowRatio dipakai untuk menolak suara "whoosh" tersebut.
     micAnalyser.getByteFrequencyData(freqBuf);
     const binHz = ctx.sampleRate / micAnalyser.fftSize;
     const startBin = Math.max(0, Math.floor(2000 / binHz));
+    const lowBin = Math.max(1, Math.floor(400 / binHz));
     let hi = 0;
+    let low = 0;
     let total = 0;
     for (let i = 0; i < freqBuf.length; i++) {
       const e = freqBuf[i] / 255;
       total += e;
       if (i >= startBin) hi += e;
+      if (i <= lowBin) low += e;
     }
     const hiRatio = total > 0 ? hi / total : 0;
+    const lowRatio = total > 0 ? low / total : 0;
 
     const now = performance.now();
-    const dynamicFloor = avg > 0.004 ? avg * 2.6 : 0.055;
-    const threshold = Math.max(0.055, dynamicFloor);
+    const dynamicFloor = avg > 0.004 ? avg * 3.5 : CLAP_MIN_RMS;
+    const threshold = Math.max(CLAP_MIN_RMS, dynamicFloor);
+
+    // Wajib ada lompatan mendadak dibanding frame sebelumnya. Suara rata
+    // atau ketukan beruntun pelan tidak akan lolos.
+    const sharpOnset = rms > prevRms * 1.8;
     const isClap =
       rms > threshold &&
-      peak > 0.45 &&
-      hiRatio > 0.24 &&
-      now - lastClap > 300;
+      peak > CLAP_MIN_PEAK &&
+      hiRatio > CLAP_HI_RATIO &&
+      lowRatio < CLAP_LOW_RATIO_MAX &&
+      sharpOnset &&
+      now - lastClap > CLAP_COOLDOWN_MS;
 
+    prevRms = rms;
     if (isClap) lastClap = now;
     return isClap;
   }

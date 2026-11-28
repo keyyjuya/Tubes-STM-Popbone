@@ -7,6 +7,7 @@ import { createHandLandmarker, detectHands } from "./landmark.js";
 import { createAudioEngine } from "./audio_fx.js";
 import { drawFrame, getCoverGeometry, projectLandmarks } from "./video_fx.js";
 import { createRecorder } from "./recorder.js";
+import { PALETTE, BUBBLE_COLORS, rgba, rgbTriplet } from "./palette.js";
 
 const TAU = Math.PI * 2;
 
@@ -36,17 +37,25 @@ const state = {
   floaters: [],
   score: 0,
   combo: 0,
+  comboWasReady: true,
+  level: 1,
   multiplierActive: false,
   multiplierUntil: 0,
   fist: false,
   fistTimer: 0,
   fistLatched: false,
   openPalm: false,
-  openPalmPrev: false,
+  openPalmTimer: 0,
+  openPalmLatched: false,
+  openPalmAnchor: null,
+  palmAlmost: false,
   bombCooldown: 0,
+  clapReadyAt: 0,
+  clapCooldownMs: 0,
+  clapHintUntil: 0,
   shake: 0,
   flash: 0,
-  flashColor: "255,255,255",
+  flashColor: "255,247,230",
   waveText: 0,
   time: 0,
   fps: 60,
@@ -58,6 +67,22 @@ const state = {
 // ---- util ----
 const rand = (min, max) => min + Math.random() * (max - min);
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+// ---- level ----
+const LEVEL_SCORE_STEP = 500;
+const MAX_LEVEL = 15;
+const LEVEL_SPEED_STEP = 0.12;
+const CLAP_BONUS_COOLDOWN = 18000;
+const BOMB_HOLD_TIME = 0.35;
+const STABLE_MOTION = 30;
+
+function computeLevel() {
+  return Math.min(MAX_LEVEL, 1 + Math.floor(state.score / LEVEL_SCORE_STEP));
+}
+
+function speedScale(level) {
+  return 1 + (level - 1) * LEVEL_SPEED_STEP;
+}
 
 // ---- runtime ----
 let landmarker = null;
@@ -91,11 +116,13 @@ function countExtended(lms) {
 
 function updateHands(result) {
   const geom = state.geom;
+  const prevHands = state.hands;
   state.hands = [];
 
   if (!result || !result.landmarks || !result.landmarks.length) {
     state.fist = false;
     state.openPalm = false;
+    state.palmAlmost = false;
     return;
   }
 
@@ -117,6 +144,8 @@ function updateHands(result) {
     const radius = Math.max(24, Math.max(palmSpan, handLen) * 0.62);
     const extended = countExtended(lms);
     const spread = dist(lms[4], lms[20]) / Math.max(1, handLen);
+    const prev = prevHands[i];
+    const motion = prev ? dist(center, prev.center) : 0;
 
     state.hands.push({
       landmarks: lms,
@@ -124,19 +153,31 @@ function updateHands(result) {
       radius,
       extended,
       spread,
-      hue: i === 0 ? 185 : 305,
+      motion,
+      color: i === 0 ? PALETTE.steel : PALETTE.pink,
     });
   }
 
-  state.fist = state.hands.some((h) => h.radius > 30 && h.extended <= 1);
+  // Gestur hanya dianggap sah kalau tangan relatif diam (bukan lambaian).
+  state.fist = state.hands.some(
+    (h) => h.radius > 30 && h.extended <= 1 && h.motion < STABLE_MOTION
+  );
   state.openPalm = state.hands.some(
-    (h) => h.radius > 30 && h.extended >= 4 && h.spread > 1.45
+    (h) =>
+      h.radius > 30 &&
+      h.extended >= 4 &&
+      h.spread > 1.45 &&
+      h.motion < STABLE_MOTION
+  );
+  // Telapak sudah terbuka tetapi jari belum cukup lebar -> tampilkan petunjuk.
+  state.palmAlmost = state.hands.some(
+    (h) => h.radius > 30 && h.extended >= 4 && h.spread <= 1.45
   );
 }
 
 // ---- game logic ----
 function spawnBubble() {
-  if (state.bubbles.length > 34) return;
+  if (state.bubbles.length >= 60) return;
   const W = state.width;
   const r = rand(26, 58);
   const baseX = rand(r + 24, W - r - 24);
@@ -146,9 +187,9 @@ function spawnBubble() {
     baseX,
     y: -r - rand(0, 120),
     r,
-    hue: rand(0, 360),
+    color: BUBBLE_COLORS[Math.floor(Math.random() * BUBBLE_COLORS.length)],
     gold: false,
-    speed: rand(85, 175) + Math.min(90, state.score * 0.004),
+    speed: rand(230, 360) * speedScale(state.level),
     phase: rand(0, TAU),
     wobble: rand(0.8, 2.2),
     amp,
@@ -167,9 +208,9 @@ function spawnBonusWave() {
       baseX,
       y: -r - i * 70 - rand(0, 40),
       r,
-      hue: 45,
+      color: PALETTE.cream,
       gold: true,
-      speed: rand(250, 330),
+      speed: rand(250, 330) * speedScale(state.level),
       phase: rand(0, TAU),
       wobble: rand(1.2, 2.4),
       amp: rand(8, 26),
@@ -178,10 +219,20 @@ function spawnBonusWave() {
   }
 }
 
-function spawnParticles(x, y, hue, count, gold) {
-  for (let i = 0; i < count; i++) {
+function spawnParticles(x, y, color, count, gold) {
+  const room = 420 - state.particles.length;
+  if (room <= 0) return;
+  const n = Math.min(count, room);
+  for (let i = 0; i < n; i++) {
     const angle = rand(0, TAU);
     const speed = rand(80, gold ? 620 : 430);
+    const particleColor = gold
+      ? Math.random() < 0.5
+        ? PALETTE.cream
+        : PALETTE.sage
+      : Math.random() < 0.3
+        ? PALETTE.cream
+        : color;
     state.particles.push({
       x,
       y,
@@ -190,9 +241,7 @@ function spawnParticles(x, y, hue, count, gold) {
       life: 0,
       dur: rand(0.35, 0.85),
       size: rand(2, gold ? 7 : 5),
-      color: gold
-        ? `hsla(${rand(35, 55)}, 100%, ${rand(70, 95)}%, 0.95)`
-        : `hsla(${(hue + rand(-20, 20) + 360) % 360}, 100%, ${rand(65, 85)}%, 0.95)`,
+      color: rgba(particleColor, rand(0.7, 0.95)),
       gravity: 700,
       drag: 0.92,
     });
@@ -212,13 +261,18 @@ function collidesWithHands(bubble) {
 
 function popBubble(index, bubble) {
   state.bubbles.splice(index, 1);
-  state.combo++;
 
   const mult = state.multiplierActive ? 2 : 1;
   const gain = Math.round(bubble.points * mult);
   state.score += gain;
 
-  spawnParticles(bubble.x, bubble.y, bubble.hue, bubble.gold ? 30 : 16 + Math.round(bubble.r * 0.25), bubble.gold);
+  spawnParticles(
+    bubble.x,
+    bubble.y,
+    bubble.color,
+    bubble.gold ? 26 : 12 + Math.round(bubble.r * 0.18),
+    bubble.gold
+  );
   state.ripples.push({
     x: bubble.x,
     y: bubble.y,
@@ -226,14 +280,14 @@ function popBubble(index, bubble) {
     max: bubble.r * 2.4,
     life: 0,
     dur: 0.5,
-    hue: bubble.hue,
+    color: bubble.color,
   });
   state.floaters.push({
     text: `+${gain}`,
     x: bubble.x,
     y: bubble.y,
     size: bubble.gold ? 38 : 28,
-    color: bubble.gold ? "rgba(255, 225, 120, 0.98)" : `hsl(${bubble.hue}, 100%, 78%)`,
+    color: bubble.gold ? rgba(PALETTE.cream, 0.98) : rgba(bubble.color, 0.98),
     life: 0,
     dur: 0.85,
   });
@@ -242,7 +296,7 @@ function popBubble(index, bubble) {
   if (audio) {
     audio.playPop(state.combo, bubble.gold);
     if (!state.multiplierActive) {
-      audio.setIntensity(0.4 + Math.min(0.45, state.combo * 0.02));
+      audio.setIntensity(0.4 + Math.min(0.5, (state.level - 1) * 0.05));
     }
   }
 }
@@ -251,14 +305,14 @@ function activateMultiplier(now) {
   state.multiplierActive = true;
   state.multiplierUntil = now + 5000;
   state.flash = 0.22;
-  state.flashColor = "255,80,200";
+  state.flashColor = rgbTriplet(PALETTE.pink);
   state.shake = Math.max(state.shake, 0.3);
   state.floaters.push({
     text: "×2 SKOR!",
     x: state.width / 2,
     y: state.height * 0.4,
     size: 56,
-    color: "rgba(255, 120, 220, 0.95)",
+    color: rgba(PALETTE.pink, 0.95),
     life: 0,
     dur: 1.1,
   });
@@ -272,13 +326,12 @@ function triggerBomb(now) {
   state.bombCooldown = now + 2200;
   if (!state.bubbles.length) return;
 
-  const count = state.bubbles.length;
   const mult = state.multiplierActive ? 2 : 1;
   let gained = 0;
 
   for (const bubble of state.bubbles) {
     gained += Math.round(bubble.points * mult);
-    spawnParticles(bubble.x, bubble.y, bubble.hue, bubble.gold ? 26 : 14, bubble.gold);
+    spawnParticles(bubble.x, bubble.y, bubble.color, bubble.gold ? 22 : 10, bubble.gold);
     state.ripples.push({
       x: bubble.x,
       y: bubble.y,
@@ -286,22 +339,21 @@ function triggerBomb(now) {
       max: bubble.r * 2.2,
       life: 0,
       dur: 0.55,
-      hue: bubble.hue,
+      color: bubble.color,
     });
   }
 
   state.score += gained;
-  state.combo += count;
   state.bubbles.length = 0;
   state.flash = 0.55;
-  state.flashColor = "255,255,255";
+  state.flashColor = rgbTriplet(PALETTE.cream);
   state.shake = 1;
   state.floaters.push({
     text: `BOM! +${gained}`,
     x: state.width / 2,
     y: state.height * 0.45,
     size: 64,
-    color: "rgba(255, 255, 255, 0.95)",
+    color: rgba(PALETTE.cream, 0.95),
     life: 0,
     dur: 1.2,
   });
@@ -309,11 +361,42 @@ function triggerBomb(now) {
   if (audio) audio.playBomb();
 }
 
-function onClap() {
+function onClap(now = performance.now()) {
   if (!state.running) return;
+
+  // Jeda antar-bonus tepuk supaya tidak bisa di-spam.
+  if (now < state.clapReadyAt) {
+    if (now > state.clapHintUntil) {
+      state.clapHintUntil = now + 900;
+      state.floaters.push({
+        text: `COOLDOWN ${Math.ceil((state.clapReadyAt - now) / 1000)}s`,
+        x: state.width / 2,
+        y: state.height * 0.62,
+        size: 28,
+        color: rgba(PALETTE.cream, 0.9),
+        life: 0,
+        dur: 0.6,
+      });
+    }
+    return;
+  }
+
+  state.clapReadyAt = now + CLAP_BONUS_COOLDOWN;
+  state.clapCooldownMs = CLAP_BONUS_COOLDOWN;
+  state.comboWasReady = false;
+  state.combo += 1;
+  state.floaters.push({
+    text: `COMBO TEPUK ×${state.combo}`,
+    x: state.width / 2,
+    y: state.height * 0.5,
+    size: 50,
+    color: rgba(PALETTE.pink, 0.95),
+    life: 0,
+    dur: 1.1,
+  });
   spawnBonusWave();
   state.flash = 0.18;
-  state.flashColor = "255,220,120";
+  state.flashColor = rgbTriplet(PALETTE.sage);
   state.waveText = 1.4;
   if (audio) audio.playBonus();
 }
@@ -352,13 +435,54 @@ function updateEffects(dt) {
 }
 
 function updateGame(dt, now) {
-  // spawn berkala
+  // naik level tiap 500 poin -> gelembung turun makin cepat
+  const level = computeLevel();
+  if (level > state.level) {
+    state.level = level;
+    state.flash = Math.max(state.flash, 0.18);
+    state.flashColor = rgbTriplet(PALETTE.steel);
+    state.floaters.push({
+      text: `LEVEL ${level}`,
+      x: state.width / 2,
+      y: state.height * 0.34,
+      size: 58,
+      color: rgba(PALETTE.steel, 0.95),
+      life: 0,
+      dur: 1.2,
+    });
+  }
+
+  // spawn berkala — lebih rapat supaya layar selalu ramai
   state.spawnTimer += dt;
-  const interval = Math.max(0.5, 0.95 - state.score * 0.00003);
+  const interval = Math.max(
+    0.2,
+    0.44 - (state.level - 1) * 0.03 - state.score * 0.000006
+  );
   if (state.spawnTimer >= interval) {
     state.spawnTimer = 0;
-    spawnBubble();
-    if (Math.random() < 0.16) spawnBubble();
+    let burst = 1;
+    if (Math.random() < 0.45) burst++;
+    if (state.level >= 4 && Math.random() < 0.25) burst++;
+    for (let i = 0; i < burst; i++) spawnBubble();
+  }
+
+  // info combo tepuk: siap / cooldown
+  const comboReady = now >= state.clapReadyAt;
+  if (comboReady && !state.comboWasReady) {
+    state.comboWasReady = true;
+    state.floaters.push({
+      text: "COMBO SIAP!",
+      x: state.width / 2,
+      y: state.height * 0.66,
+      size: 50,
+      color: rgba(PALETTE.sage, 0.96),
+      life: 0,
+      dur: 1.2,
+    });
+    state.flash = Math.max(state.flash, 0.1);
+    state.flashColor = rgbTriplet(PALETTE.sage);
+  } else if (!comboReady) {
+    state.comboWasReady = false;
   }
 
   // gerak & tabrakan gelembung
@@ -374,13 +498,12 @@ function updateGame(dt, now) {
 
     if (b.y - b.r > state.height) {
       state.bubbles.splice(i, 1);
-      state.combo = 0;
       state.floaters.push({
         text: "MISS",
         x: b.x,
         y: state.height - 60,
         size: 26,
-        color: "rgba(255, 120, 120, 0.8)",
+        color: rgba(PALETTE.rose, 0.85),
         life: 0,
         dur: 0.7,
       });
@@ -396,7 +519,7 @@ function updateGame(dt, now) {
   // habis masa ×2
   if (state.multiplierActive && now > state.multiplierUntil) {
     state.multiplierActive = false;
-    if (audio) audio.setIntensity(0.4);
+    if (audio) audio.setIntensity(0.4 + Math.min(0.5, (state.level - 1) * 0.05));
   }
 
   // gestur kepalan ditahan
@@ -411,11 +534,40 @@ function updateGame(dt, now) {
     state.fistLatched = false;
   }
 
-  // gestur telapak dibuka lebar -> bom
-  if (state.openPalm && !state.openPalmPrev && now > state.bombCooldown && state.bubbles.length > 0) {
-    triggerBomb(now);
+  // gestur telapak dibuka lebar harus DITAHAN sebentar -> bom.
+  // Tangan yang berpindah jauh (mis. melambai) akan mereset hitungan,
+  // jadi lambaian tidak memicu bom/combo.
+  if (state.openPalm) {
+    const palmHand = state.hands.find(
+      (h) =>
+        h.radius > 30 &&
+        h.extended >= 4 &&
+        h.spread > 1.45 &&
+        h.motion < STABLE_MOTION
+    );
+    if (palmHand) {
+      if (!state.openPalmAnchor) {
+        state.openPalmAnchor = { x: palmHand.center.x, y: palmHand.center.y };
+      } else if (dist(palmHand.center, state.openPalmAnchor) > 80) {
+        state.openPalmAnchor = { x: palmHand.center.x, y: palmHand.center.y };
+        state.openPalmTimer = 0;
+      }
+    }
+    state.openPalmTimer += dt;
+    if (
+      state.openPalmTimer > BOMB_HOLD_TIME &&
+      !state.openPalmLatched &&
+      now > state.bombCooldown &&
+      state.bubbles.length > 0
+    ) {
+      state.openPalmLatched = true;
+      triggerBomb(now);
+    }
+  } else {
+    state.openPalmTimer = 0;
+    state.openPalmLatched = false;
+    state.openPalmAnchor = null;
   }
-  state.openPalmPrev = state.openPalm;
 }
 
 function updateHudDom(dt) {
@@ -462,7 +614,7 @@ function loop(now) {
 
   if (state.running) {
     updateGame(dt, now);
-    if (audio && audio.detectClap()) onClap();
+    if (audio && audio.detectClap()) onClap(now);
   } else {
     updateEffects(dt);
   }
@@ -521,7 +673,7 @@ stopRecordBtn.addEventListener("click", async () => {
 // fallback pemicu manual (mis. mikrofon tidak tersedia)
 window.addEventListener("keydown", (event) => {
   if (!state.running) return;
-  if (event.code === "KeyB") onClap();
+  if (event.code === "KeyB") onClap(performance.now());
   else if (event.code === "KeyX" && state.bubbles.length) triggerBomb(performance.now());
 });
 

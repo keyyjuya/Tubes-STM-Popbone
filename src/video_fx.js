@@ -2,6 +2,8 @@
  * Modul video_fx: menggambar video kamera, rangka neon tangan, gelembung,
  * partikel, efek layar, dan HUD ke canvas.
  */
+import { PALETTE, rgba, mix } from "./palette.js";
+
 export const HAND_CONNECTIONS = [
   [0, 1], [1, 2], [2, 3], [3, 4],
   [0, 5], [5, 6], [6, 7], [7, 8],
@@ -14,10 +16,8 @@ export const HAND_CONNECTIONS = [
 const TAU = Math.PI * 2;
 const FONT_ORBIT = '"Orbitron", sans-serif';
 const FONT_TEXT = '"Space Grotesk", sans-serif';
-
-function hsl(h, s, l, a = 1) {
-  return `hsla(${h}, ${s}%, ${l}%, ${a})`;
-}
+const TIP_INDICES = [4, 8, 12, 16, 20];
+const TIP_SET = new Set(TIP_INDICES);
 
 function roundRect(ctx, x, y, w, h, r) {
   const rr = Math.min(r, w / 2, h / 2);
@@ -83,10 +83,77 @@ function drawStar(ctx, x, y, r, points, color) {
   ctx.fill();
 }
 
+const BUBBLE_SPRITE_SIZE = 256;
+const BUBBLE_SPRITE_R = 64;
+const bubbleSpriteCache = new Map();
+
+function getBubbleSprite(color, gold) {
+  const key = `${color}|${gold ? 1 : 0}`;
+  const cached = bubbleSpriteCache.get(key);
+  if (cached) return cached;
+
+  const c = document.createElement("canvas");
+  c.width = BUBBLE_SPRITE_SIZE;
+  c.height = BUBBLE_SPRITE_SIZE;
+  const g = c.getContext("2d");
+  const rr = BUBBLE_SPRITE_R;
+  g.translate(BUBBLE_SPRITE_SIZE / 2, BUBBLE_SPRITE_SIZE / 2);
+
+  // halo
+  g.globalCompositeOperation = "lighter";
+  const glow = g.createRadialGradient(0, 0, rr * 0.2, 0, 0, rr * 1.7);
+  glow.addColorStop(0, rgba(color, gold ? 0.5 : 0.32));
+  glow.addColorStop(1, rgba(color, 0));
+  g.fillStyle = glow;
+  g.beginPath();
+  g.arc(0, 0, rr * 1.7, 0, TAU);
+  g.fill();
+  g.globalCompositeOperation = "source-over";
+
+  // badan gelembung
+  const body = g.createRadialGradient(-rr * 0.35, -rr * 0.4, rr * 0.1, 0, 0, rr);
+  if (gold) {
+    body.addColorStop(0, rgba(PALETTE.cream, 0.98));
+    body.addColorStop(0.45, rgba(PALETTE.sage, 0.58));
+    body.addColorStop(1, rgba(PALETTE.rose, 0.18));
+  } else {
+    body.addColorStop(0, rgba(PALETTE.cream, 0.95));
+    body.addColorStop(0.5, rgba(color, 0.42));
+    body.addColorStop(1, rgba(color, 0.1));
+  }
+  g.fillStyle = body;
+  g.beginPath();
+  g.arc(0, 0, rr, 0, TAU);
+  g.fill();
+
+  // rim neon
+  g.lineWidth = Math.max(1.5, rr * 0.06);
+  g.strokeStyle = gold ? rgba(PALETTE.cream, 0.95) : rgba(color, 0.9);
+  g.shadowBlur = 18;
+  g.shadowColor = gold ? rgba(PALETTE.sage, 0.9) : rgba(color, 0.9);
+  g.beginPath();
+  g.arc(0, 0, rr - 1, 0, TAU);
+  g.stroke();
+  g.shadowBlur = 0;
+
+  // kilau
+  g.beginPath();
+  g.ellipse(-rr * 0.32, -rr * 0.38, rr * 0.22, rr * 0.14, -0.7, 0, TAU);
+  g.fillStyle = rgba(PALETTE.cream, 0.85);
+  g.fill();
+
+  if (gold) {
+    drawStar(g, rr * 0.42, -rr * 0.42, rr * 0.24, 4, rgba(PALETTE.cream, 0.95));
+  }
+
+  bubbleSpriteCache.set(key, c);
+  return c;
+}
+
 function drawVideo(ctx, state) {
   const W = state.width;
   const H = state.height;
-  ctx.fillStyle = "#05010c";
+  ctx.fillStyle = PALETTE.slate;
   ctx.fillRect(0, 0, W, H);
 
   const { video, geom } = state;
@@ -101,75 +168,27 @@ function drawVideo(ctx, state) {
       W * 0.5, H * 0.5, Math.min(W, H) * 0.2,
       W * 0.5, H * 0.5, Math.max(W, H) * 0.78
     );
-    vignette.addColorStop(0, "rgba(10, 4, 24, 0)");
-    vignette.addColorStop(1, "rgba(6, 2, 16, 0.74)");
+    vignette.addColorStop(0, rgba(PALETTE.slate, 0));
+    vignette.addColorStop(1, rgba(PALETTE.slate, 0.74));
     ctx.fillStyle = vignette;
     ctx.fillRect(0, 0, W, H);
 
-    ctx.fillStyle = "rgba(46, 0, 88, 0.10)";
+    ctx.fillStyle = rgba(PALETTE.slate, 0.1);
     ctx.fillRect(0, 0, W, H);
   }
 }
 
 function drawBubbles(ctx, state) {
   const t = state.time;
+  const scale = BUBBLE_SPRITE_SIZE / BUBBLE_SPRITE_R;
 
   for (const b of state.bubbles) {
     const pulse = 1 + Math.sin(t * 3 + b.phase) * 0.03;
     const rr = b.r * pulse;
-    const hue = b.hue;
-
-    ctx.save();
-    ctx.translate(b.x, b.y);
-
-    // halo
-    ctx.globalCompositeOperation = "lighter";
-    const glow = ctx.createRadialGradient(0, 0, rr * 0.2, 0, 0, rr * 1.7);
-    glow.addColorStop(0, hsl(hue, 100, 70, b.gold ? 0.5 : 0.32));
-    glow.addColorStop(1, hsl(hue, 100, 60, 0));
-    ctx.fillStyle = glow;
-    ctx.beginPath();
-    ctx.arc(0, 0, rr * 1.7, 0, TAU);
-    ctx.fill();
-    ctx.globalCompositeOperation = "source-over";
-
-    // badan gelembung
-    const body = ctx.createRadialGradient(-rr * 0.35, -rr * 0.4, rr * 0.1, 0, 0, rr);
-    if (b.gold) {
-      body.addColorStop(0, "rgba(255, 252, 220, 0.98)");
-      body.addColorStop(0.45, "rgba(255, 214, 90, 0.58)");
-      body.addColorStop(1, "rgba(190, 120, 10, 0.18)");
-    } else {
-      body.addColorStop(0, hsl(hue, 100, 88, 0.98));
-      body.addColorStop(0.5, hsl(hue, 95, 62, 0.42));
-      body.addColorStop(1, hsl(hue, 100, 55, 0.1));
-    }
-    ctx.fillStyle = body;
-    ctx.beginPath();
-    ctx.arc(0, 0, rr, 0, TAU);
-    ctx.fill();
-
-    // rim neon
-    ctx.lineWidth = Math.max(1.5, rr * 0.06);
-    ctx.strokeStyle = b.gold ? "rgba(255, 236, 160, 0.95)" : hsl(hue, 100, 80, 0.9);
-    ctx.shadowBlur = 18;
-    ctx.shadowColor = b.gold ? "rgba(255, 200, 70, 0.9)" : hsl(hue, 100, 65, 0.9);
-    ctx.beginPath();
-    ctx.arc(0, 0, rr - 1, 0, TAU);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-
-    // kilau
-    ctx.beginPath();
-    ctx.ellipse(-rr * 0.32, -rr * 0.38, rr * 0.22, rr * 0.14, -0.7, 0, TAU);
-    ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
-    ctx.fill();
-
-    if (b.gold) {
-      drawStar(ctx, rr * 0.42, -rr * 0.42, rr * 0.24, 4, "rgba(255, 255, 255, 0.95)");
-    }
-
-    ctx.restore();
+    const color = b.color || PALETTE.pink;
+    const sprite = getBubbleSprite(color, b.gold);
+    const size = rr * scale;
+    ctx.drawImage(sprite, b.x - size / 2, b.y - size / 2, size, size);
   }
 }
 
@@ -180,7 +199,7 @@ function drawRipples(ctx, state) {
     const radius = rp.r + (rp.max - rp.r) * eased;
     ctx.beginPath();
     ctx.arc(rp.x, rp.y, radius, 0, TAU);
-    ctx.strokeStyle = hsl(rp.hue, 100, 78, (1 - k) * 0.8);
+    ctx.strokeStyle = rgba(rp.color || PALETTE.steel, (1 - k) * 0.8);
     ctx.lineWidth = 4 * (1 - k) + 1;
     ctx.stroke();
   }
@@ -201,6 +220,22 @@ function drawParticles(ctx, state) {
   ctx.restore();
 }
 
+function strokeConnections(ctx, pts, width, style, shadowBlur, shadowColor) {
+  ctx.beginPath();
+  for (const [a, b] of HAND_CONNECTIONS) {
+    const p = pts[a];
+    const q = pts[b];
+    if (!p || !q) continue;
+    ctx.moveTo(p.x, p.y);
+    ctx.lineTo(q.x, q.y);
+  }
+  ctx.lineWidth = width;
+  ctx.strokeStyle = style;
+  ctx.shadowBlur = shadowBlur;
+  ctx.shadowColor = shadowColor || "transparent";
+  ctx.stroke();
+}
+
 function drawHands(ctx, state) {
   const t = state.time;
 
@@ -208,9 +243,8 @@ function drawHands(ctx, state) {
     const pts = hand.landmarks;
     if (!pts || pts.length < 21) return;
 
-    const hue = hand.hue != null ? hand.hue : i === 0 ? 185 : 305;
-    const color = `hsl(${hue}, 100%, 62%)`;
-    const color2 = `hsl(${hue}, 100%, 82%)`;
+    const color = hand.color || (i === 0 ? PALETTE.steel : PALETTE.pink);
+    const color2 = mix(color, PALETTE.cream, 0.55);
 
     ctx.save();
     ctx.globalCompositeOperation = "lighter";
@@ -220,54 +254,47 @@ function drawHands(ctx, state) {
     // cincin bidik di telapak
     ctx.setLineDash([8, 10]);
     ctx.lineDashOffset = -t * 40;
-    ctx.strokeStyle = hsl(hue, 100, 72, 0.55);
+    ctx.strokeStyle = rgba(color, 0.55);
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.arc(hand.center.x, hand.center.y, hand.radius, 0, TAU);
     ctx.stroke();
     ctx.setLineDash([]);
 
+    // outline gelap agar rangka tetap terbaca di latar terang
+    ctx.globalCompositeOperation = "source-over";
+    strokeConnections(ctx, pts, 13, rgba(PALETTE.slate, 0.62), 0, "transparent");
+
     // tulang bercahaya
-    ctx.shadowBlur = 26;
-    ctx.shadowColor = color;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 9;
-    for (const [a, b] of HAND_CONNECTIONS) {
-      const p = pts[a];
-      const q = pts[b];
-      if (!p || !q) continue;
-      ctx.beginPath();
-      ctx.moveTo(p.x, p.y);
-      ctx.lineTo(q.x, q.y);
-      ctx.stroke();
-    }
+    ctx.globalCompositeOperation = "lighter";
+    strokeConnections(ctx, pts, 9, color, 18, color);
 
     // inti putih
-    ctx.shadowBlur = 8;
-    ctx.shadowColor = color2;
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.92)";
-    ctx.lineWidth = 2.4;
-    for (const [a, b] of HAND_CONNECTIONS) {
-      const p = pts[a];
-      const q = pts[b];
-      if (!p || !q) continue;
-      ctx.beginPath();
-      ctx.moveTo(p.x, p.y);
-      ctx.lineTo(q.x, q.y);
-      ctx.stroke();
-    }
+    strokeConnections(ctx, pts, 2.4, rgba(PALETTE.cream, 0.92), 4, color2);
 
-    // sendi
-    ctx.shadowBlur = 18;
+    // sendi (digambar batch supaya lebih ringan)
+    ctx.shadowBlur = 12;
     ctx.shadowColor = color;
+
+    ctx.beginPath();
     for (let k = 0; k < pts.length; k++) {
+      if (TIP_SET.has(k)) continue;
       const p = pts[k];
-      const isTip = k === 4 || k === 8 || k === 12 || k === 16 || k === 20;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, isTip ? 7 : 4.5, 0, TAU);
-      ctx.fillStyle = isTip ? color2 : "rgba(255, 255, 255, 0.95)";
-      ctx.fill();
+      ctx.moveTo(p.x + 4.5, p.y);
+      ctx.arc(p.x, p.y, 4.5, 0, TAU);
     }
+    ctx.fillStyle = rgba(PALETTE.cream, 0.95);
+    ctx.fill();
+
+    ctx.beginPath();
+    for (const k of TIP_INDICES) {
+      const p = pts[k];
+      if (!p) continue;
+      ctx.moveTo(p.x + 7, p.y);
+      ctx.arc(p.x, p.y, 7, 0, TAU);
+    }
+    ctx.fillStyle = color2;
+    ctx.fill();
 
     ctx.restore();
   });
@@ -281,9 +308,9 @@ function drawFloaters(ctx, state) {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.font = `900 ${f.size || 28}px ${FONT_ORBIT}`;
-    ctx.fillStyle = f.color || "rgba(255,255,255,0.95)";
+    ctx.fillStyle = f.color || rgba(PALETTE.cream, 0.95);
     ctx.shadowBlur = 22;
-    ctx.shadowColor = f.color || "rgba(120,220,255,0.9)";
+    ctx.shadowColor = f.color || rgba(PALETTE.steel, 0.9);
     ctx.fillText(f.text, f.x, f.y - k * 64);
     ctx.restore();
   }
@@ -299,24 +326,27 @@ function drawHud(ctx, state) {
 
   // skor
   ctx.font = `900 58px ${FONT_ORBIT}`;
-  ctx.fillStyle = "rgba(255, 255, 255, 0.96)";
+  ctx.fillStyle = rgba(PALETTE.cream, 0.96);
   ctx.shadowBlur = 24;
-  ctx.shadowColor = "rgba(0, 240, 255, 0.8)";
+  ctx.shadowColor = rgba(PALETTE.steel, 0.8);
   ctx.fillText(String(Math.round(state.score)).padStart(4, "0"), 36, 28);
   ctx.shadowBlur = 0;
 
   ctx.font = `700 17px ${FONT_TEXT}`;
-  ctx.fillStyle = "rgba(150, 240, 255, 0.85)";
+  ctx.fillStyle = rgba(PALETTE.steel, 0.9);
   ctx.fillText("SKOR", 39, 94);
 
-  // combo
-  if (state.combo > 1) {
-    const hue = (state.time * 120) % 360;
-    ctx.font = `800 30px ${FONT_ORBIT}`;
-    ctx.fillStyle = hsl(hue, 100, 70);
+  ctx.fillStyle = rgba(PALETTE.sage, 0.95);
+  ctx.fillText(`LEVEL ${state.level}`, 120, 94);
+
+  // combo (hanya dari tepuk tangan)
+  if (state.combo > 0) {
+    const comboColor = state.combo % 2 === 0 ? PALETTE.pink : PALETTE.sage;
+    ctx.font = `800 26px ${FONT_ORBIT}`;
+    ctx.fillStyle = comboColor;
     ctx.shadowBlur = 20;
-    ctx.shadowColor = hsl(hue, 100, 60);
-    ctx.fillText(`COMBO ×${state.combo}`, 38, 124);
+    ctx.shadowColor = rgba(PALETTE.rose, 0.8);
+    ctx.fillText(`COMBO TEPUK ×${state.combo}`, 38, 124);
     ctx.shadowBlur = 0;
   }
 
@@ -324,14 +354,14 @@ function drawHud(ctx, state) {
   if (state.multiplierActive) {
     const remain = Math.max(0, (state.multiplierUntil - performance.now()) / 1000);
     const w = 230;
-    ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
+    ctx.fillStyle = rgba(PALETTE.slate, 0.42);
     roundRect(ctx, 38, 178, w, 14, 7);
     ctx.fill();
-    ctx.fillStyle = "rgba(255, 80, 200, 0.9)";
+    ctx.fillStyle = rgba(PALETTE.pink, 0.9);
     roundRect(ctx, 38, 178, w * Math.min(1, remain / 5), 14, 7);
     ctx.fill();
     ctx.font = `800 18px ${FONT_ORBIT}`;
-    ctx.fillStyle = "rgba(255, 150, 230, 0.95)";
+    ctx.fillStyle = rgba(PALETTE.pink, 0.95);
     ctx.fillText("×2", 278, 174);
   }
 
@@ -339,8 +369,8 @@ function drawHud(ctx, state) {
   ctx.textAlign = "right";
   ctx.font = `700 17px ${FONT_TEXT}`;
   ctx.fillStyle = state.hands.length
-    ? "rgba(120, 255, 200, 0.9)"
-    : "rgba(255, 170, 120, 0.9)";
+    ? rgba(PALETTE.sage, 0.9)
+    : rgba(PALETTE.rose, 0.9);
   ctx.fillText(
     state.hands.length ? `${state.hands.length} TANGAN TERDETEKSI` : "TANGAN TIDAK TERDETEKSI",
     W - 36,
@@ -352,11 +382,11 @@ function drawHud(ctx, state) {
     const blink = Math.sin(state.time * 6) > 0;
     ctx.beginPath();
     ctx.arc(W - 116, 82, 9, 0, TAU);
-    ctx.fillStyle = blink ? "rgba(255, 60, 90, 0.95)" : "rgba(255, 60, 90, 0.3)";
+    ctx.fillStyle = blink ? rgba(PALETTE.rose, 0.95) : rgba(PALETTE.rose, 0.3);
     ctx.fill();
     ctx.textAlign = "right";
     ctx.font = `800 18px ${FONT_ORBIT}`;
-    ctx.fillStyle = "rgba(255, 120, 140, 0.95)";
+    ctx.fillStyle = rgba(PALETTE.pink, 0.95);
     ctx.fillText("REC", W - 36, 72);
   }
 
@@ -365,10 +395,10 @@ function drawHud(ctx, state) {
     const a = Math.min(1, state.waveText);
     ctx.textAlign = "center";
     ctx.font = `900 52px ${FONT_ORBIT}`;
-    ctx.fillStyle = `rgba(255, 215, 90, ${a})`;
+    ctx.fillStyle = rgba(PALETTE.cream, a);
     ctx.shadowBlur = 30;
-    ctx.shadowColor = "rgba(255, 180, 40, 0.9)";
-    ctx.fillText("GELOMBANG BONUS!", W / 2, H * 0.22);
+    ctx.shadowColor = rgba(PALETTE.sage, 0.9);
+    ctx.fillText("BONUS TEPUK!", W / 2, H * 0.22);
     ctx.shadowBlur = 0;
   }
 
@@ -376,8 +406,66 @@ function drawHud(ctx, state) {
   if (!state.hands.length && state.running) {
     ctx.textAlign = "center";
     ctx.font = `700 26px ${FONT_TEXT}`;
-    ctx.fillStyle = "rgba(255, 255, 255, 0.75)";
+    ctx.fillStyle = rgba(PALETTE.cream, 0.8);
     ctx.fillText("Angkat telapak tangan ke kamera", W / 2, H * 0.82);
+  }
+
+  // petunjuk saat telapak terbuka tapi jari belum direntangkan lebar
+  if (state.running && state.palmAlmost && !state.openPalm) {
+    ctx.textAlign = "center";
+    ctx.font = `700 24px ${FONT_TEXT}`;
+    ctx.fillStyle = rgba(PALETTE.pink, 0.95);
+    ctx.shadowBlur = 16;
+    ctx.shadowColor = rgba(PALETTE.rose, 0.8);
+    ctx.fillText("Rentangkan & tahan jari untuk BOM", W / 2, H * 0.88);
+    ctx.shadowBlur = 0;
+  }
+
+  // status combo tepuk: jelas saat siap / cooldown
+  if (state.running) {
+    const remain = Math.max(0, (state.clapReadyAt - performance.now()) / 1000);
+    const ready = remain <= 0;
+    const panelX = 28;
+    const panelY = H - 98;
+    const panelW = 312;
+    const panelH = 70;
+    const barX = 44;
+    const barY = H - 54;
+    const barW = 280;
+    const barH = 14;
+
+    ctx.fillStyle = rgba(PALETTE.slate, 0.58);
+    roundRect(ctx, panelX, panelY, panelW, panelH, 14);
+    ctx.fill();
+
+    ctx.textAlign = "left";
+    ctx.font = `700 16px ${FONT_TEXT}`;
+    if (ready) {
+      const pulse = 0.72 + Math.sin(state.time * 6) * 0.28;
+      ctx.fillStyle = rgba(PALETTE.sage, pulse);
+      ctx.shadowBlur = 14;
+      ctx.shadowColor = rgba(PALETTE.sage, 0.75);
+      ctx.fillText("COMBO SIAP - TEPUK TANGAN", barX, H - 88);
+      ctx.shadowBlur = 0;
+    } else {
+      ctx.fillStyle = rgba(PALETTE.pink, 0.95);
+      ctx.fillText(`COMBO COOLDOWN ${Math.ceil(remain)}s`, barX, H - 88);
+    }
+
+    ctx.fillStyle = rgba(PALETTE.slate, 0.85);
+    roundRect(ctx, barX, barY, barW, barH, barH / 2);
+    ctx.fill();
+
+    const total = state.clapCooldownMs > 0 ? state.clapCooldownMs / 1000 : 1;
+    const progress = ready ? 1 : Math.max(0, Math.min(1, 1 - remain / total));
+    ctx.fillStyle = ready ? rgba(PALETTE.sage, 0.95) : rgba(PALETTE.pink, 0.85);
+    if (ready) {
+      ctx.shadowBlur = 14;
+      ctx.shadowColor = rgba(PALETTE.sage, 0.8);
+    }
+    roundRect(ctx, barX, barY, Math.max(0, barW * progress), barH, barH / 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
   }
 
   ctx.restore();
@@ -401,7 +489,7 @@ export function drawFrame(ctx, state) {
 
   if (state.flash > 0.01) {
     const alpha = Math.min(0.72, state.flash);
-    ctx.fillStyle = `rgba(${state.flashColor || "255,255,255"}, ${alpha})`;
+    ctx.fillStyle = `rgba(${state.flashColor || "255,247,230"}, ${alpha})`;
     ctx.fillRect(-40, -40, W + 80, H + 80);
   }
 

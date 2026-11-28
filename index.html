@@ -3,23 +3,27 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#05010d" />
+  <meta name="theme-color" content="#2d3a47" />
   <meta name="description" content="PopBone - game pemecah gelembung dengan rangka neon tangan di browser." />
   <title>PopBone — Pemecah Gelembung Neon</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='26' fill='%2305010d' stroke='%233ef0ff' stroke-width='4'/%3E%3Ccircle cx='23' cy='23' r='7' fill='%23ff4fd8'/%3E%3C/svg%3E" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='26' fill='%232d3a47' stroke='%23a9b7c6' stroke-width='4'/%3E%3Ccircle cx='23' cy='23' r='7' fill='%23f7c8d3'/%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --bg: #05010d;
-      --panel: rgba(14, 8, 30, 0.72);
-      --stroke: rgba(120, 220, 255, 0.22);
-      --cyan: #3ef0ff;
-      --pink: #ff4fd8;
-      --gold: #ffd24a;
-      --text: #eaf6ff;
-      --muted: #8ea7bd;
+      --bg: #2d3a47;
+      --bg-deep: #232e39;
+      --panel: rgba(45, 58, 71, 0.78);
+      --stroke: rgba(169, 183, 198, 0.28);
+      --cyan: #a9b7c6;
+      --pink: #f7c8d3;
+      --gold: #fff7e6;
+      --cream: #fff7e6;
+      --rose: #b46a72;
+      --sage: #a8b58a;
+      --text: #fff7e6;
+      --muted: #a9b7c6;
     }
     * { box-sizing: border-box; }
     html, body { height: 100%; }
@@ -28,9 +32,9 @@
       font-family: "Space Grotesk", system-ui, sans-serif;
       color: var(--text);
       background:
-        radial-gradient(1200px 700px at 20% -10%, rgba(62, 240, 255, 0.12), transparent 60%),
-        radial-gradient(1000px 600px at 90% 0%, rgba(255, 79, 216, 0.12), transparent 55%),
-        radial-gradient(900px 900px at 50% 120%, rgba(120, 80, 255, 0.14), transparent 60%),
+        radial-gradient(1200px 700px at 20% -10%, rgba(169, 183, 198, 0.16), transparent 60%),
+        radial-gradient(1000px 600px at 90% 0%, rgba(247, 200, 211, 0.14), transparent 55%),
+        radial-gradient(900px 900px at 50% 120%, rgba(168, 181, 138, 0.14), transparent 60%),
         var(--bg);
       min-height: 100%;
       overflow-x: hidden;
@@ -40,8 +44,8 @@
       position: fixed;
       inset: 0;
       background-image:
-        linear-gradient(rgba(120, 220, 255, 0.05) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(120, 220, 255, 0.05) 1px, transparent 1px);
+        linear-gradient(rgba(169, 183, 198, 0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(169, 183, 198, 0.06) 1px, transparent 1px);
       background-size: 44px 44px;
       -webkit-mask-image: radial-gradient(circle at 50% 30%, #000 0%, transparent 75%);
       mask-image: radial-gradient(circle at 50% 30%, #000 0%, transparent 75%);
@@ -70,11 +74,11 @@
       gap: 10px;
       user-select: none;
     }
-    .brand span { color: var(--cyan); text-shadow: 0 0 18px rgba(62, 240, 255, 0.7); }
+    .brand span { color: var(--pink); text-shadow: 0 0 18px rgba(247, 200, 211, 0.7); }
     .brand .dot {
       width: 10px; height: 10px; border-radius: 50%;
-      background: var(--pink);
-      box-shadow: 0 0 16px var(--pink);
+      background: var(--sage);
+      box-shadow: 0 0 16px var(--sage);
       animation: pulse 2s infinite;
     }
     .telemetry { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -86,7 +90,7 @@
       border: 1px solid var(--stroke);
       padding: 7px 12px;
       border-radius: 999px;
-      background: rgba(10, 16, 32, 0.5);
+      background: rgba(45, 58, 71, 0.5);
       backdrop-filter: blur(6px);
       white-space: nowrap;
     }
@@ -94,12 +98,12 @@
       position: relative;
       border-radius: 22px;
       overflow: hidden;
-      border: 1px solid rgba(120, 220, 255, 0.25);
+      border: 1px solid rgba(169, 183, 198, 0.3);
       box-shadow:
-        0 0 0 1px rgba(0, 0, 0, 0.4),
-        0 24px 80px rgba(0, 0, 0, 0.6),
-        0 0 60px rgba(62, 240, 255, 0.08);
-      background: #04010a;
+        0 0 0 1px rgba(0, 0, 0, 0.35),
+        0 24px 80px rgba(0, 0, 0, 0.45),
+        0 0 60px rgba(169, 183, 198, 0.1);
+      background: var(--bg-deep);
       aspect-ratio: 16 / 9;
     }
     .cam { position: absolute; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
@@ -110,7 +114,7 @@
       display: grid;
       place-items: center;
       padding: clamp(12px, 3vw, 24px);
-      background: radial-gradient(circle at 50% 40%, rgba(10, 6, 26, 0.55), rgba(4, 1, 12, 0.88));
+      background: radial-gradient(circle at 50% 40%, rgba(45, 58, 71, 0.55), rgba(35, 46, 57, 0.88));
       backdrop-filter: blur(4px);
       transition: opacity 0.35s ease;
       overflow: auto;
@@ -121,21 +125,21 @@
       text-align: center;
       padding: clamp(18px, 4vw, 36px);
       border-radius: 22px;
-      border: 1px solid rgba(120, 220, 255, 0.22);
-      background: linear-gradient(180deg, rgba(18, 12, 40, 0.9), rgba(9, 6, 22, 0.92));
+      border: 1px solid rgba(169, 183, 198, 0.25);
+      background: linear-gradient(180deg, rgba(45, 58, 71, 0.92), rgba(35, 46, 57, 0.94));
       box-shadow:
-        0 30px 80px rgba(0, 0, 0, 0.55),
-        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        0 30px 80px rgba(0, 0, 0, 0.45),
+        inset 0 1px 0 rgba(255, 247, 230, 0.08);
     }
     .card h1 {
       font-family: "Orbitron", sans-serif;
       font-size: clamp(32px, 6vw, 52px);
       letter-spacing: 0.14em;
       margin: 0 0 8px;
-      text-shadow: 0 0 30px rgba(62, 240, 255, 0.45);
+      text-shadow: 0 0 30px rgba(169, 183, 198, 0.45);
     }
-    .card h1 span { color: var(--cyan); }
-    .tagline { margin: 0 0 18px; color: #b9d3e8; font-size: 15px; }
+    .card h1 span { color: var(--pink); }
+    .tagline { margin: 0 0 18px; color: #dbe4ea; font-size: 15px; }
     .hints {
       list-style: none;
       padding: 0;
@@ -146,16 +150,16 @@
     }
     .hints li {
       font-size: 13.5px;
-      color: #c7dcef;
+      color: #e4ecf1;
       padding: 9px 13px;
       border-radius: 12px;
-      background: rgba(120, 220, 255, 0.06);
-      border: 1px solid rgba(120, 220, 255, 0.12);
+      background: rgba(169, 183, 198, 0.08);
+      border: 1px solid rgba(169, 183, 198, 0.16);
       line-height: 1.35;
     }
-    .hints b { color: #fff; }
+    .hints b { color: var(--cream, #fff7e6); }
     .privacy { font-size: 12px; color: var(--muted); margin: 0 0 16px; line-height: 1.5; }
-    .error { color: #ff8a9e; font-size: 13px; margin: 14px 0 0; white-space: pre-wrap; text-align: left; }
+    .error { color: var(--pink); font-size: 13px; margin: 14px 0 0; white-space: pre-wrap; text-align: left; }
     .btn {
       appearance: none;
       cursor: pointer;
@@ -163,24 +167,24 @@
       font-weight: 700;
       font-size: 14px;
       letter-spacing: 0.04em;
-      color: #dff4ff;
-      background: rgba(20, 30, 52, 0.7);
-      border: 1px solid rgba(120, 220, 255, 0.28);
+      color: var(--cream, #fff7e6);
+      background: rgba(45, 58, 71, 0.7);
+      border: 1px solid rgba(169, 183, 198, 0.3);
       padding: 11px 18px;
       border-radius: 12px;
       transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
     }
     .btn:hover:not(:disabled) {
-      border-color: rgba(62, 240, 255, 0.7);
-      box-shadow: 0 0 24px rgba(62, 240, 255, 0.25);
+      border-color: rgba(247, 200, 211, 0.7);
+      box-shadow: 0 0 24px rgba(247, 200, 211, 0.25);
       transform: translateY(-1px);
     }
     .btn:active:not(:disabled) { transform: translateY(0); }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .btn.primary {
-      background: linear-gradient(120deg, var(--cyan), #6a8bff 55%, var(--pink));
-      color: #04121a;
+      background: linear-gradient(120deg, var(--pink), var(--sage) 55%, var(--cyan));
+      color: #2d3a47;
       border: none;
       font-family: "Orbitron", sans-serif;
       letter-spacing: 0.1em;
@@ -193,19 +197,19 @@
       place-content: center;
       justify-items: center;
       gap: 16px;
-      background: rgba(4, 1, 12, 0.8);
+      background: rgba(35, 46, 57, 0.85);
       backdrop-filter: blur(6px);
       text-align: center;
     }
     .loading[hidden] { display: none; }
-    .loading p { color: #bfe6ff; font-size: 14px; letter-spacing: 0.06em; margin: 0; }
+    .loading p { color: #eaf1f5; font-size: 14px; letter-spacing: 0.06em; margin: 0; }
     .spinner {
       width: 54px; height: 54px; border-radius: 50%;
-      border: 3px solid rgba(62, 240, 255, 0.15);
-      border-top-color: var(--cyan);
-      border-right-color: var(--pink);
+      border: 3px solid rgba(169, 183, 198, 0.15);
+      border-top-color: var(--pink);
+      border-right-color: var(--sage);
       animation: spin 1s linear infinite;
-      box-shadow: 0 0 30px rgba(62, 240, 255, 0.2);
+      box-shadow: 0 0 30px rgba(169, 183, 198, 0.2);
     }
     .dock {
       display: flex;
@@ -232,12 +236,12 @@
     .k.palm { background: var(--cyan); color: var(--cyan); }
     .k.fist { background: var(--pink); color: var(--pink); }
     .k.clap { background: var(--gold); color: var(--gold); }
-    .k.bomb { background: #fff; color: #fff; }
+    .k.bomb { background: var(--sage); color: var(--sage); }
     .actions { display: flex; gap: 10px; margin-left: auto; }
     .recording-flash { animation: recpulse 1.4s infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-    @keyframes recpulse { 0%, 100% { border-color: rgba(255, 90, 120, 0.9); box-shadow: 0 0 20px rgba(255, 90, 120, 0.4); } 50% { border-color: rgba(255, 90, 120, 0.3); box-shadow: none; } }
+    @keyframes recpulse { 0%, 100% { border-color: rgba(180, 106, 114, 0.9); box-shadow: 0 0 20px rgba(180, 106, 114, 0.4); } 50% { border-color: rgba(180, 106, 114, 0.3); box-shadow: none; } }
     @media (max-width: 640px) {
       .brand { font-size: 16px; }
       .chip { padding: 6px 9px; font-size: 10.5px; }
@@ -269,8 +273,8 @@
           <ul class="hints">
             <li><b>Telapak menyentuh gelembung</b> untuk memecahkannya dan menambah skor.</li>
             <li><b>Kepalan ditahan</b> ±0,5 detik → skor ×2 selama 5 detik, beat makin ramai.</li>
-            <li><b>Tepuk tangan</b> → gelombang gelembung emas bonus jatuh dari atas.</li>
-            <li><b>Telapak dibuka lebar</b> → bom memecahkan semua gelembung di layar.</li>
+            <li><b>Tepuk tangan keras</b> → combo (hanya dari tepuk) + gelombang gelembung emas bonus jatuh dari atas. Jeda combo 18 detik; indikator di kiri bawah menunjukkan saat siap / cooldown.</li>
+            <li><b>Telapak dibuka lebar dengan jari direntangkan &amp; ditahan</b> → bom memecahkan semua gelembung di layar.</li>
           </ul>
           <p class="privacy">Semua proses kamera &amp; audio berjalan di perangkatmu. Tidak ada video yang diunggah. Gunakan headphone agar musik tidak memicu tepuk palsu.</p>
           <button id="startBtn" class="btn primary big">Mulai Bermain</button>
@@ -289,7 +293,7 @@
         <span><i class="k palm"></i> sentuh</span>
         <span><i class="k fist"></i> tahan kepalan</span>
         <span><i class="k clap"></i> tepuk</span>
-        <span><i class="k bomb"></i> buka lebar</span>
+        <span><i class="k bomb"></i> rentangkan jari</span>
       </div>
       <div class="actions">
         <button id="recordBtn" class="btn" disabled>● Rekam</button>

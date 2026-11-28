@@ -9,9 +9,10 @@ export async function startCamera(videoEl) {
 
   const videoConstraints = {
     facingMode: "user",
-    width: { ideal: 1280 },
-    height: { ideal: 720 },
-    frameRate: { ideal: 30, max: 60 },
+    // Resolusi lebih kecil + 30 fps membuat deteksi tangan jauh lebih ringan.
+    width: { ideal: 960 },
+    height: { ideal: 540 },
+    frameRate: { ideal: 30, max: 30 },
   };
 
   let stream;
