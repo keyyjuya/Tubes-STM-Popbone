@@ -92,9 +92,19 @@ export function createRecorder(canvasEl, audioStream) {
     mediaRecorder = null;
   }
 
+  function pause() {
+    if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.pause();
+  }
+
+  function resume() {
+    if (mediaRecorder && mediaRecorder.state === "paused") mediaRecorder.resume();
+  }
+
   return {
     start,
     stop,
+    pause,
+    resume,
     get active() {
       return !!mediaRecorder && mediaRecorder.state === "recording";
     },

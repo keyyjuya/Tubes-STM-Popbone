@@ -24,6 +24,14 @@ const statusEl = document.getElementById("status");
 const fpsEl = document.getElementById("fps");
 const recordBtn = document.getElementById("recordBtn");
 const stopRecordBtn = document.getElementById("stopRecordBtn");
+// Elemen jeda/keluar: kalau index.html belum diperbarui, game tetap bisa jalan.
+const optionalEl = (id) =>
+  document.getElementById(id) || { addEventListener() {}, hidden: true, disabled: true, textContent: "" };
+const pauseBtn = optionalEl("pauseBtn");
+const exitBtn = optionalEl("exitBtn");
+const pauseScreen = optionalEl("pauseScreen");
+const resumeBtn = optionalEl("resumeBtn");
+const pauseExitBtn = optionalEl("pauseExitBtn");
 
 const state = {
   video,
@@ -60,6 +68,7 @@ const state = {
   time: 0,
   fps: 60,
   running: false,
+  paused: false,
   recording: false,
   spawnTimer: 0,
 };
@@ -75,6 +84,9 @@ const LEVEL_SPEED_STEP = 0.12;
 const CLAP_BONUS_COOLDOWN = 18000;
 const BOMB_HOLD_TIME = 0.35;
 const STABLE_MOTION = 30;
+// Tangan yang bergeser lebih jauh dari ini per frame deteksi (piksel) dianggap menyapu
+// terlalu cepat dan TIDAK memecahkan gelembung. Lebih kecil = lebih ketat.
+const POP_MAX_MOTION = 45;
 
 function computeLevel() {
   return Math.min(MAX_LEVEL, 1 + Math.floor(state.score / LEVEL_SCORE_STEP));
@@ -93,6 +105,9 @@ let started = false;
 let lastVideoTime = -1;
 let lastFrame = performance.now();
 let hudAccum = 0;
+let rafId = 0;
+let pausedAt = 0;
+let clapIgnoreUntil = 0;
 
 function setLoading(text) {
   loadingText.textContent = text;
@@ -250,6 +265,8 @@ function spawnParticles(x, y, color, count, gold) {
 
 function collidesWithHands(bubble) {
   for (const hand of state.hands) {
+    // gerakan terlalu cepat tidak memecahkan gelembung
+    if (hand.motion > POP_MAX_MOTION) continue;
     if (dist(hand.center, bubble) < bubble.r + hand.radius * 0.82) return true;
     for (const idx of [4, 8, 12, 16, 20]) {
       const p = hand.landmarks[idx];
@@ -587,7 +604,13 @@ function updateHudDom(dt) {
 
 // ---- loop utama ----
 function loop(now) {
-  requestAnimationFrame(loop);
+  rafId = requestAnimationFrame(loop);
+
+  // Saat jeda: layar dibiarkan membeku di frame terakhir, tidak ada yang diproses.
+  if (state.paused) {
+    lastFrame = now;
+    return;
+  }
 
   const dt = Math.min(0.05, Math.max(0.001, (now - lastFrame) / 1000));
   lastFrame = now;
@@ -614,7 +637,9 @@ function loop(now) {
 
   if (state.running) {
     updateGame(dt, now);
-    if (audio && audio.detectClap()) onClap(now);
+    // detectClap tetap dipanggil agar ambang suara terus diperbarui,
+    // tetapi tepuk diabaikan sesaat setelah lanjut dari jeda.
+    if (audio && audio.detectClap() && now > clapIgnoreUntil) onClap(now);
   } else {
     updateEffects(dt);
   }
@@ -656,7 +681,7 @@ recordBtn.addEventListener("click", () => {
   }
 });
 
-stopRecordBtn.addEventListener("click", async () => {
+async function finishRecording() {
   if (!recorder) return;
   stopRecordBtn.disabled = true;
   const blob = await recorder.stop();
@@ -668,11 +693,157 @@ stopRecordBtn.addEventListener("click", async () => {
     const ext = blob.type.includes("mp4") ? "mp4" : "webm";
     downloadBlob(blob, `popbone-${stamp()}.${ext}`);
   }
+}
+
+stopRecordBtn.addEventListener("click", finishRecording);
+
+// ---- jeda & keluar ----
+function pauseGame() {
+  if (!state.running || state.paused) return;
+  state.paused = true;
+  pausedAt = performance.now();
+  pauseScreen.hidden = false;
+  pauseBtn.textContent = "Lanjut";
+  statusEl.textContent = "Jeda";
+  if (audio) audio.ctx.suspend().catch(() => {});
+  if (recorder && recorder.pause) recorder.pause();
+}
+
+async function resumeGame() {
+  if (!state.running || !state.paused) return;
+  const now = performance.now();
+  const gap = now - pausedAt;
+
+  // Hitungan waktu nyata ikut bergeser supaya waktu jeda tidak ikut terhitung.
+  for (const key of ["multiplierUntil", "clapReadyAt", "clapHintUntil", "bombCooldown"]) {
+    if (state[key] > pausedAt) state[key] += gap;
+  }
+
+  state.paused = false;
+  pauseScreen.hidden = true;
+  pauseBtn.textContent = "Jeda";
+  lastFrame = now;
+  clapIgnoreUntil = now + 600;
+  if (audio) {
+    try {
+      await audio.ctx.resume();
+    } catch (err) {
+      /* noop */
+    }
+  }
+  if (recorder && recorder.resume) recorder.resume();
+}
+
+function togglePause() {
+  if (state.paused) resumeGame();
+  else pauseGame();
+}
+
+function resetGame() {
+  Object.assign(state, {
+    hands: [],
+    bubbles: [],
+    particles: [],
+    ripples: [],
+    floaters: [],
+    score: 0,
+    combo: 0,
+    comboWasReady: true,
+    level: 1,
+    multiplierActive: false,
+    multiplierUntil: 0,
+    fist: false,
+    fistTimer: 0,
+    fistLatched: false,
+    openPalm: false,
+    openPalmTimer: 0,
+    openPalmLatched: false,
+    openPalmAnchor: null,
+    palmAlmost: false,
+    bombCooldown: 0,
+    clapReadyAt: 0,
+    clapCooldownMs: 0,
+    clapHintUntil: 0,
+    shake: 0,
+    flash: 0,
+    waveText: 0,
+    spawnTimer: 0,
+    paused: false,
+    running: false,
+    recording: false,
+  });
+}
+
+async function exitGame() {
+  // rekaman yang sedang berjalan disimpan dulu supaya tidak hilang
+  if (recorder) await finishRecording();
+
+  state.running = false;
+  state.paused = false;
+  started = false;
+
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = 0;
+
+  if (audio) {
+    audio.destroy();
+    audio = null;
+    audioStream = null;
+  }
+
+  const camStream = video.srcObject;
+  if (camStream && camStream.getTracks) camStream.getTracks().forEach((t) => t.stop());
+  video.srcObject = null;
+  lastVideoTime = -1;
+
+  resetGame();
+
+  ctx.fillStyle = PALETTE.slate;
+  ctx.fillRect(0, 0, state.width, state.height);
+
+  pauseScreen.hidden = true;
+  pauseBtn.textContent = "Jeda";
+  pauseBtn.disabled = true;
+  exitBtn.disabled = true;
+  recordBtn.disabled = true;
+  stopRecordBtn.disabled = true;
+  recordBtn.classList.remove("recording-flash");
+  statusEl.textContent = "Siap";
+  fpsEl.textContent = "-- FPS";
+
+  startScreen.classList.remove("hidden");
+  startBtn.disabled = false;
+}
+
+async function requestExit() {
+  if (!state.running) return;
+  const wasPaused = state.paused;
+  pauseGame();
+  if (window.confirm("Keluar ke menu awal? Skor dan level akan direset.")) {
+    await exitGame();
+  } else if (!wasPaused) {
+    resumeGame();
+  }
+}
+
+pauseBtn.addEventListener("click", togglePause);
+resumeBtn.addEventListener("click", resumeGame);
+exitBtn.addEventListener("click", requestExit);
+pauseExitBtn.addEventListener("click", requestExit);
+
+// jeda otomatis kalau tab disembunyikan / pindah jendela
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) pauseGame();
 });
 
 // fallback pemicu manual (mis. mikrofon tidak tersedia)
 window.addEventListener("keydown", (event) => {
   if (!state.running) return;
+  if (event.code === "KeyP" || event.code === "Escape") {
+    togglePause();
+    return;
+  }
+  if (state.paused) return;
   if (event.code === "KeyB") onClap(performance.now());
   else if (event.code === "KeyX" && state.bubbles.length) triggerBomb(performance.now());
 });
@@ -703,13 +874,15 @@ async function start() {
     }
 
     setLoading("Memuat model Hand Landmarker…");
-    landmarker = await createHandLandmarker();
+    if (!landmarker) landmarker = await createHandLandmarker();
 
     started = true;
     state.running = true;
     loading.hidden = true;
     startScreen.classList.add("hidden");
     recordBtn.disabled = typeof MediaRecorder === "undefined";
+    pauseBtn.disabled = false;
+    exitBtn.disabled = false;
 
     if (audio) {
       audio.startBeat();
@@ -718,7 +891,7 @@ async function start() {
 
     statusEl.textContent = micStream ? "Live" : "Live (mikrofon off)";
     lastFrame = performance.now();
-    requestAnimationFrame(loop);
+    if (!rafId) rafId = requestAnimationFrame(loop);
   } catch (err) {
     console.error(err);
     loading.hidden = true;
