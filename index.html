@@ -190,6 +190,29 @@
       letter-spacing: 0.1em;
     }
     .btn.primary.big { font-size: 16px; padding: 15px 34px; width: 100%; }
+    .pause-screen {
+      position: absolute;
+      inset: 0;
+      z-index: 5;
+      display: grid;
+      place-content: center;
+      justify-items: center;
+      text-align: center;
+      gap: 6px;
+      background: rgba(35, 46, 57, 0.72);
+      backdrop-filter: blur(6px);
+    }
+    .pause-screen[hidden] { display: none; }
+    .pause-screen h2 {
+      font-family: "Orbitron", sans-serif;
+      font-size: clamp(28px, 5vw, 44px);
+      letter-spacing: 0.16em;
+      margin: 0;
+      color: var(--cream, #fff7e6);
+      text-shadow: 0 0 30px rgba(169, 183, 198, 0.45);
+    }
+    .pause-screen p { margin: 0 0 12px; color: #dbe4ea; font-size: 14px; }
+    .pause-actions { display: grid; gap: 10px; width: min(280px, 80vw); }
     .loading {
       position: absolute;
       inset: 0;
@@ -275,6 +298,7 @@
             <li><b>Kepalan ditahan</b> ±0,5 detik → skor ×2 selama 5 detik, beat makin ramai.</li>
             <li><b>Tepuk tangan keras</b> → combo (hanya dari tepuk) + gelombang gelembung emas bonus jatuh dari atas. Jeda combo 18 detik; indikator di kiri bawah menunjukkan saat siap / cooldown.</li>
             <li><b>Telapak dibuka lebar dengan jari direntangkan &amp; ditahan</b> → bom memecahkan semua gelembung di layar.</li>
+            <li><b>P</b> atau <b>Esc</b> → jeda. Tombol <b>Keluar</b> kembali ke menu awal.</li>
           </ul>
           <p class="privacy">Semua proses kamera &amp; audio berjalan di perangkatmu. Tidak ada video yang diunggah. Gunakan headphone agar musik tidak memicu tepuk palsu.</p>
           <button id="startBtn" class="btn primary big">Mulai Bermain</button>
@@ -286,6 +310,15 @@
         <div class="spinner"></div>
         <p id="loadingText">Menyiapkan…</p>
       </div>
+
+      <div class="pause-screen" id="pauseScreen" hidden>
+        <h2>JEDA</h2>
+        <p>Tekan P atau Esc untuk melanjutkan.</p>
+        <div class="pause-actions">
+          <button id="resumeBtn" class="btn primary big">Lanjutkan</button>
+          <button id="pauseExitBtn" class="btn">Keluar ke menu</button>
+        </div>
+      </div>
     </main>
 
     <footer class="dock">
@@ -296,6 +329,8 @@
         <span><i class="k bomb"></i> rentangkan jari</span>
       </div>
       <div class="actions">
+        <button id="pauseBtn" class="btn" disabled>Jeda</button>
+        <button id="exitBtn" class="btn" disabled>Keluar</button>
         <button id="recordBtn" class="btn" disabled>● Rekam</button>
         <button id="stopRecordBtn" class="btn" disabled>■ Stop &amp; Unduh</button>
       </div>
